@@ -1,0 +1,19 @@
+# Local model weights (download separately from Hugging Face)
+models/
+*.safetensors
+*.safetensors.index.json
+*.gguf
+
+# Logs and scratch
+*.log
+*.out
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

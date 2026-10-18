@@ -1,0 +1,176 @@
+# nvidia/Qwen3.8-Flash-Next-FP4-Local on DGX Spark (GB10)
+
+Starter script for serving [nvidia/Qwen3.8-Flash-Next-FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local) on a single NVIDIA DGX Spark (GB10, SM121) with vLLM.
+
+## Quick start
+
+```bash
+./starter-qwen38-flash-next-fp4.sh                 # foreground
+DETACH=1 ./starter-qwen38-flash-next-fp4.sh        # background + health wait + smoke test
+DRY_RUN=1 ./starter-qwen38-flash-next-fp4.sh       # print docker command
+```
+
+Stop: `docker rm -f qwen38-flash-next` (or your `CONTAINER_NAME`) — Logs: `docker logs -f qwen38-flash-next`
+
+## Why a community container?
+
+This checkpoint's NVFP4 scale factors use a CSF (compressed) format that upstream vLLM cannot load. You must use a community container with `--load-format b12x`:
+
+```bash
+IMAGE=eugr/spark-vllm-b12x:latest  # default, arm64 for GB10
+```
+
+Stock `vllm/vllm-openai` images will fail to load the weights even with the b12x wheel.
+
+## Configuration
+
+All knobs are env vars (override before the script name):
+
+### Common
+
+| Var | Default | Description |
+|-----|---------|-------------|
+| `IMAGE` | `eugr/spark-vllm-b12x:latest` | Container with CSF NVFP4 loader |
+| `MODEL_DIR` | `~/models/Qwen3.8-Flash-Next-FP4-Local` | Host path to the checkpoint (mounted read-only at `/model`) |
+| `GPU_MEM_UTIL` | `0.89` | Fraction of unified memory for vLLM (keep `<= 0.9`, the OS shares unified memory) |
+| `MAX_MODEL_LEN` | `524288` | Context window (yarn rope from native 262144, see below) |
+| `MAX_NUM_SEQS` | `7` | Max concurrent sequences |
+| `MAX_NUM_BATCHED_TOKENS` | `16384` | Prefill chunk size |
+| `PORT` | `8081` | Host port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `SERVED_NAME` | `qwen38-flash-next-fp4` | OpenAI-compatible model name |
+| `SPEC` | `mtp` | Speculative decoding: `mtp` or `none` |
+| `SPEC_TOKENS` | `4` | Draft tokens per MTP step |
+| `PLE_OFFLOAD` | `1` | 1 = n-gram table on disk, 0 = RAM |
+| `CONTAINER_NAME` | `qwen38-flash-next` | Docker container name |
+| `DETACH` | `0` | 1 = run in background, wait for health, smoke test |
+| `DRY_RUN` | `0` | 1 = print the docker command and exit |
+| `EXTRA_ARGS` | | Extra vLLM flags after `--` (word-split on spaces, see below) |
+| `EXTRA_ENV` | | Extra `-e KEY=VALUE` env entries (space-separated `KEY=VALUE` pairs) |
+
+Example:
+```bash
+MAX_MODEL_LEN=131072 GPU_MEM_UTIL=0.75 PORT=8082 DETACH=1 ./starter-qwen38-flash-next-fp4.sh
+```
+
+### Extra arguments — two ways
+
+```bash
+# 1. '--' passthrough (safe: each arg stays quoted, values with spaces/JSON are fine)
+./starter-qwen38-flash-next-fp4.sh -- --seed 42 --max-parallel-lookahead 8
+
+# 2. EXTRA_ARGS (splits on spaces — do NOT use for values containing spaces or JSON)
+EXTRA_ARGS="--seed 42" ./starter-qwen38-flash-next-fp4.sh
+```
+
+Args passed via `--` land after everything the script sets, so they win.
+
+### Context window and rope scaling
+
+The checkpoint natively supports 262144 tokens. When `MAX_MODEL_LEN > 262144`
+(the default is 524288), the script auto-injects `--hf-overrides` with a yarn
+rope config: `factor = MAX_MODEL_LEN / 262144` (2.0 for the default),
+`original_max_position_embeddings=262144`, interleaved mrope.
+
+- `MAX_MODEL_LEN <= 262144` → no override is injected, native config is used.
+- Set `HF_OVERRIDES` explicitly to take full control (an explicitly set value
+  is always passed through untouched, even if empty).
+
+### Advanced — vLLM flags
+
+| Var | Default | Description |
+|-----|---------|-------------|
+| `TP` / `PP` | `1` / `1` | Tensor / pipeline parallel size (single Spark) |
+| `KV_CACHE_DTYPE` | `fp8` | KV cache quantization |
+| `BLOCK_SIZE` | `16` | Paged-attention block size |
+| `LOAD_FORMAT` | `b12x` | Weight loader (b12x = CSF NVFP4) |
+| `LINEAR_BACKEND` | `b12x` | Linear-layer backend |
+| `MOE_BACKEND` | `b12x` | MoE backend |
+| `GDN_DECODE_KERNEL` | `b12x` | Gated DeltaNet decode kernel |
+| `MAMBA_CACHE_MODE` | `align` | Hybrid mamba/SSM cache mode |
+| `OPTIMIZATION_LEVEL` | `3` | vLLM optimization level |
+| `PERFORMANCE_MODE` | `throughput` | vLLM performance mode |
+| `ENABLE_PREFIX_CACHING` | `1` | 0 disables prefix caching |
+| `ENABLE_CHUNKED_PREFILL` | `1` | 0 disables chunked prefill |
+| `FUSE_ACT_QUANT` | `1` | Fuse activation-quantization pass |
+| `REASONING_PARSER` | `qwen3` | `--reasoning-parser` value |
+| `TOOL_PARSER` | `qwen3_coder` | `--tool-call-parser` value (auto tool choice always on) |
+| `HF_OVERRIDES` | (auto) | Explicit `--hf-overrides` JSON; suppresses the auto rope config |
+
+### Advanced — container env (b12x / AOT)
+
+| Var | Default | Description |
+|-----|---------|-------------|
+| `VLLM_PLE_TABLE_MEMORY` | derived from `PLE_OFFLOAD` | `disk` or `ram` |
+| `B12X_DISK_BACKEND` | `io_uring` | Disk backend for the offloaded n-gram table |
+| `CUTE_DSL_ARCH` | `sm_121a` | CuTe DSL target arch for GB10 |
+| `SAFETENSORS_FAST_GPU` | `1` | Fast safetensor loading |
+| `VLLM_WORKER_MULTIPROC_METHOD` | `spawn` | Worker spawn method |
+| `VLLM_SSM_CONV_STATE_LAYOUT` | `DS` | SSM conv-state layout |
+| `VLLM_USE_AOT_COMPILE` | `1` | AOT-compile kernels |
+| `VLLM_USE_MEGA_AOT_ARTIFACT` | `1` | Reuse the mega AOT artifact |
+| `VLLM_USE_V2_MODEL_RUNNER` | `1` | V2 model runner |
+| `B12X_POLICY_MODE` | `auto` | b12x kernel policy mode |
+| `VLLM_MXFP8_LM_HEAD` | `1` | MXFP8 LM head |
+| `VLLM_B12X_MOE_FP4_LAYER_MAX_INPUT_SCALE` | `w13` | MoE FP4 input-scale source |
+| `VLLM_B12X_MOE_FP4_FORCE_A16` | `1` | Force FP16 activations in FP4 MoE layers |
+| `B12X_W4A16_A4_PREFILL` | `1` | 4-bit weights / 4-bit act prefill path |
+| `OMP_NUM_THREADS` | `2` | OpenMP threads (leave headroom for CPU-bound work) |
+| `PYTORCH_CUDA_ALLOC_CONF` | `expandable_segments:True` | CUDA allocator config |
+
+## First boot and caches
+
+- Loading ~96 GiB of weights plus AOT kernel compilation can take a long time.
+  `DETACH=1` waits up to **2400 s (40 min)** for `/v1/models` to answer, then
+  runs a 32-token smoke test. Subsequent starts are much faster.
+- These host directories are mounted into the container and persist across
+  restarts, so compiled artifacts and indexes are reused:
+  `~/.cache/huggingface`, `~/.cache/vllm`, `~/.cache/flashinfer`,
+  `~/.cache/triton`, `~/.cache/b12x`.
+- The host needs `curl` and `python3` for the detached health check / smoke test.
+
+## Performance (DGX Spark GB10, 121 GiB unified memory)
+
+Benchmarked with AIPerf via AI gateway (`localhost:8001`, an OpenAI-compatible
+proxy in front of the server on `localhost:8081`).
+Test: 128 input tokens, 512 output tokens, 40 requests, MTP-4 speculative decoding.
+
+| Concurrency | Active Decode (agg) | Per User | TTFT | Request Latency | p50 Decode (agg) |
+|-------------|---------------------|----------|------|-----------------|------------------|
+| 1 | 41.2 tok/s | 41.2 tok/s | 348 ms | 12.7 s | 40.5 tok/s |
+| 2 | 58.4 tok/s | 30.1 tok/s | 525 ms | 17.4 s | 60.1 tok/s |
+| 4 | 84.8 tok/s | 22.2 tok/s | 682 ms | 23.7 s | 88.7 tok/s |
+
+Notes:
+- Aggregate scales ~linearly (41 → 58 → 85 tok/s); the GB10 is not yet saturated at c=4.
+- Per-user throughput decreases as expected (shared GPU).
+- TTFT and latency increase moderately — no queueing bottleneck.
+- Min/max outliers (0 / 6733 tok/s) are from failed/short responses; use p50.
+
+## Model
+
+- **Architecture**: Hybrid Gated DeltaNet + Qwen Sparse Attention + MoE (512 experts) + n-gram embedding (PLE) + native MTP head
+- **Size**: ~125B total (6B active) + 51B n-gram + 4B MTP, ~96 GiB on disk
+- **Quantization**: NVFP4 QAD (modelopt_mixed, CSF scales)
+- **KV cache**: FP8, block-size 16
+- **Speculative decoding**: MTP, 4 draft tokens
+- **Reasoning**: `--reasoning-parser qwen3`, toggle per-request with `chat_template_kwargs {"enable_thinking": true/false}`
+- **Tool calling**: `--tool-call-parser qwen3_coder`
+
+## Requirements
+
+- NVIDIA DGX Spark (GB10, SM121) with 121 GiB unified memory
+- Docker with GPU support
+- Model at `~/models/Qwen3.8-Flash-Next-FP4-Local` (or set `MODEL_DIR=`)
+
+## Troubleshooting
+
+- **Server exits before ready**: `DETACH=1` prints the last 40 container log
+  lines automatically; re-run with `docker logs qwen38-flash-next`.
+- **Smoke test warning but server up**: the API still works — the smoke test
+  is best-effort; check `docker logs qwen38-flash-next`.
+- **Out of memory at startup**: lower `GPU_MEM_UTIL` (e.g. `0.80`) or
+  `MAX_MODEL_LEN`; unified memory is shared with the OS.
+- **Slow first request**: kernel AOT artifacts are cached in `~/.cache/b12x`
+  and `~/.cache/vllm`; the very first prompt after an image/toolchain change
+  triggers recompilation.
