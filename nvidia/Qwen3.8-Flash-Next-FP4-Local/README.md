@@ -12,6 +12,8 @@ DRY_RUN=1 ./starter-qwen38-flash-next-fp4.sh       # print docker command
 
 Stop: `docker rm -f qwen38-flash-next` (or your `CONTAINER_NAME`) — Logs: `docker logs -f qwen38-flash-next`
 
+## Configuration
+
 This checkpoint's NVFP4 scale factors use a CSF (compressed) format that upstream vLLM cannot load. You must use a community container with `--load-format b12x`:
 
 ```bash
@@ -19,7 +21,6 @@ IMAGE=eugr/spark-vllm-b12x:latest  # default, arm64 for GB10
 ```
 
 Stock `vllm/vllm-openai` images will fail to load the weights even with the b12x wheel.
-
 
 ### Common
 

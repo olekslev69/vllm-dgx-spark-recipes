@@ -191,7 +191,7 @@ until curl -sf --max-time 5 "$URL/models" >/dev/null 2>&1; do
     echo "ERROR: the server exited before it was ready." >&2
     exit 1
   fi
-  [ $((SECONDS - start)) -ge 2400 ] && { echo; echo "ERROR: not ready after 2400s" >&2; exit 1; }
+  [ $((SECONDS - start)) -ge 1200 ] && { echo; echo "ERROR: not ready after 1200s" >&2; exit 1; }
   printf '.'; sleep 3
 done
 echo " ready after $((SECONDS - start))s"
