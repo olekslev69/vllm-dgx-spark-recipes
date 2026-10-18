@@ -147,6 +147,27 @@ Notes:
 - TTFT and latency increase moderately — no queueing bottleneck.
 - Min/max outliers (0 / 6733 tok/s) are from failed/short responses; use p50.
 
+### Long context (500K tokens)
+
+AIPerf run: 3 requests × 499,945 input tokens, 32 output tokens, concurrency 1,
+3 shuffled prompts so the prefix cache cannot serve requests 2/3 (cold prefill each time).
+
+| Metric | Value |
+|--------|-------|
+| Requests | 3/3 completed, 0 errors |
+| Prefill throughput (avg) | **1,652.7 tok/s** (min 1,651.9 / max 1,659.5) |
+| TTFT (avg) | **302.1 s** (~5.0 min per 500K-token prompt) |
+| Request latency (avg) | 302.5 s |
+| Inter-token latency (p50) | 10.1 ms (~99 tok/s/user decode at 500K context) |
+| Total wall time | 907 s (3 serial requests) |
+
+Notes:
+- Prefill variance is ±4 tok/s across all 3 requests — no thermal throttling
+  or fragmentation; request 3 is as fast as request 1.
+- Decode at 500K context shows no KV-cache read penalty (~10 ms ITL).
+- Decode throughput at OSL=32 is directional only (~7 decode steps; MTP bursts
+  make max values meaningless — use ITL p50).
+
 ## Model
 
 - **Architecture**: Hybrid Gated DeltaNet + Qwen Sparse Attention + MoE (512 experts) + n-gram embedding (PLE) + native MTP head
