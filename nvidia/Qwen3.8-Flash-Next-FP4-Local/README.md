@@ -95,20 +95,6 @@ rope config: `factor = MAX_MODEL_LEN / 262144` (2.0 for the default),
 ## Performance (DGX Spark GB10, 121 GiB unified memory)
 
 Benchmarked with AIPerf via AI gateway.
-Test: 128 input tokens, 512 output tokens, 40 requests, MTP-4 speculative decoding.
-
-| Concurrency | Active Decode (agg) | Per User | TTFT | Request Latency | p50 Decode (agg) |
-|-------------|---------------------|----------|------|-----------------|------------------|
-| 1 | 41.2 tok/s | 41.2 tok/s | 348 ms | 12.7 s | 40.5 tok/s |
-| 2 | 58.4 tok/s | 30.1 tok/s | 525 ms | 17.4 s | 60.1 tok/s |
-| 4 | 84.8 tok/s | 22.2 tok/s | 682 ms | 23.7 s | 88.7 tok/s |
-
-Notes:
-- Aggregate scales ~linearly (41 → 58 → 85 tok/s); the GB10 is not yet saturated at c=4.
-- Per-user throughput decreases as expected (shared GPU).
-- TTFT and latency increase moderately — no queueing bottleneck.
-- Min/max outliers (0 / 6733 tok/s) are from failed/short responses; use p50.
-
 ### Concurrency sweep (512 in / 512 out)
 
 AIPerf run: 512 input tokens, 512 output tokens, 40 requests per concurrency
@@ -119,13 +105,6 @@ level (120 total, 0 errors), MTP-4 speculative decoding.
 | 1 | 44.8 tok/s | 44.5 tok/s | 472 ms | 11.9 s | 44.2 tok/s |
 | 2 | 60.7 tok/s | 32.0 tok/s | 657 ms | 16.7 s | 60.4 tok/s |
 | 4 | 86.6 tok/s | 23.3 tok/s | 890 ms | 22.8 s | 89.7 tok/s |
-
-Notes:
-- Aggregate decode scaling (45 → 61 → 87 tok/s) matches the 128-ISL sweep
-  (41 → 58 → 85) — prefill size does not affect decode-phase scaling.
-- TTFT is ~1.4× higher than the 128-ISL run despite 4× longer prompts;
-  prefill stays above 1,100 tok/s even at c=4 (512 tokens / 0.47 s).
-- ITL p50: 22.1 / 32.3 / 43.4 ms for c=1/2/4.
 
 ### Long context (500K tokens)
 
@@ -144,9 +123,6 @@ AIPerf run: 3 requests × 499,945 input tokens, 32 output tokens, concurrency 1,
 Notes:
 - Prefill variance is ±4 tok/s across all 3 requests — no thermal throttling
   or fragmentation; request 3 is as fast as request 1.
-- Decode at 500K context shows no KV-cache read penalty (~10 ms ITL).
-- Decode throughput at OSL=32 is directional only (~7 decode steps; MTP bursts
-  make max values meaningless — use ITL p50).
 
 ## Model
 
